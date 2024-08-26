@@ -180,7 +180,7 @@ fn update_best(pos : &Chess, score : f64, move_ : Move, best_score : &mut f64, b
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
 
-static mut HASHMAP : Lazy<HashMap<Board, (Option<Move>, f64, u32)>> = Lazy::new(|| HashMap::new() );
+static mut HASHMAP : Lazy<HashMap<(Board, Color), (Option<Move>, f64, u32)>> = Lazy::new(|| HashMap::new() );
     
 static MAX_DEPTH : u32 = 6;
 
@@ -190,7 +190,7 @@ fn find_best(pos : &Chess, mut alpha : f64, mut beta : f64, depth : u32) -> (Opt
     
     unsafe
     {
-        let maybe = HASHMAP.get(pos.board());
+        let maybe = HASHMAP.get(&(pos.board().clone(), pos.turn()));
         if let Some((move_, score, maybe_depth)) = maybe
         {
             // ignore cached mate values because they have depth embedded in them
@@ -198,11 +198,6 @@ fn find_best(pos : &Chess, mut alpha : f64, mut beta : f64, depth : u32) -> (Opt
             {
                 return (move_.clone(), *score);
             }
-        }
-        
-        if HASHMAP.len() > 1000000
-        {
-            HASHMAP.clear();
         }
     }
     
@@ -218,7 +213,7 @@ fn find_best(pos : &Chess, mut alpha : f64, mut beta : f64, depth : u32) -> (Opt
         return (None, score);
     }
     
-    if legal_moves.len() > 1
+    if legal_moves.len() > 8
     {
         legal_moves.sort_by(|a, b|
         {
@@ -277,7 +272,11 @@ fn find_best(pos : &Chess, mut alpha : f64, mut beta : f64, depth : u32) -> (Opt
     
     unsafe
     {
-        HASHMAP.insert(pos.board().clone(), (best_move.clone(), best_score, depth));
+        if HASHMAP.len() > 1000000
+        {
+            HASHMAP.clear();
+        }
+        HASHMAP.insert((pos.board().clone(), pos.turn()), (best_move.clone(), best_score, depth));
     }
     
     if is_root
@@ -386,16 +385,19 @@ fn main()
     let mut move_ = find_best(&pos, -ab_ext, ab_ext, MAX_DEPTH);
     let mut n = 0;
     let mut movelog = "".to_string();
+    let mut movelog_uci = "".to_string();
     while move_.0.is_some()
     {
         use std::io::Write;
         
         let m = move_.0.as_ref().unwrap();
-        print!("{} ", m.to_uci(pos.castles().mode()));
+        let uci = m.to_uci(pos.castles().mode());
+        print!("{} ", uci);
         
         std::io::stdout().flush().unwrap();
         
         movelog += &format!("{} ", San::from_move(&pos, &m).to_string());
+        movelog_uci += &format!("{} ", uci);
         
         pos.play_unchecked(&(move_.0.as_ref().unwrap()));
         if pos.is_game_over() || pos.halfmoves() > 50
@@ -411,6 +413,7 @@ fn main()
         if n % 16 == 0
         {
             movelog += "\n";
+            movelog_uci += "\n";
         }
         
         std::io::stdout().flush().unwrap();
@@ -424,6 +427,7 @@ fn main()
     println!("");
     println!("All done!");
     println!("{}", movelog);
+    println!("{}", movelog_uci);
     print_board(&pos, None);
     if pos.is_checkmate()
     {
