@@ -50,14 +50,10 @@ fn get_piece_value_modifier(coords : (i32, i32), role : Role) -> f32
         Role::King =>
         {
             let mut ret = 0.0;
-            if (coords.0 == 0 || coords.0 == 7) && (coords.1 == 0 || coords.1 == 7)
-            {
-                ret -= 0.8;
-            }
             // better value in castling target positions to encourage castling
             if (coords.0 == 2 && coords.1 == 0) || (coords.0 == 6 && coords.1 == 0)
             {
-                ret += 2.0;
+                ret += 0.5;
             }
             return ret;
         }
@@ -124,9 +120,12 @@ fn eval_inner(pos : &Chess) -> f32
             eval += value;
             
             // reduce evaluation for pieces that are being attacked
-            let bb = board.attacks_to(sq, !piece.color, board.occupied());
-            let attack_count = bb.count();
-            eval -= (attack_count as f32) * 0.1 * color_f;
+            if piece.role != Role::Pawn
+            {
+                let bb = board.attacks_to(sq, !piece.color, board.occupied());
+                let attack_count = bb.count();
+                eval -= (attack_count as f32) * 0.2 * color_f;
+            }
         }
     }
     
@@ -373,7 +372,7 @@ fn main()
         }
     }
     
-    let mut pos = if false
+    let mut pos = if true
     {
         Chess::default()
     }
