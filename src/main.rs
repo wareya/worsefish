@@ -1,6 +1,6 @@
-use shakmaty::{Chess, Board, Position, Square, Color, Role, Move, Piece, san::San};
+use shakmaty::{Chess, Board, Position, Square, Color, Role, Move, Piece, san::San, fen::Epd};
 
-fn piece_value(role : Role, first_knight : &mut bool) -> f64
+fn piece_value(role : Role, first_knight : &mut bool) -> f32
 {
     match role
     {
@@ -27,26 +27,26 @@ fn sq_to_coords(sq : Square) -> (i32, i32)
 }
 
 // from white's perspective. y:0 = white piece home row, y:7 = black piece home row.
-fn get_piece_value_modifier(coords : (i32, i32), role : Role) -> f64
+fn get_piece_value_modifier(coords : (i32, i32), role : Role) -> f32
 {
-    let centered = (coords.0 as f64 - 3.5, coords.1 as f64 - 3.5);
-    let tented = (3.5 - centered.0.abs(), 3.5 - centered.1.abs());
+    let centered = (coords.0 as f32 - 3.5, coords.1 as f32 - 3.5);
+    let tented = (1.0 - centered.0.abs() * (1.0/3.5), 1.0 - centered.1.abs() * (1.0/3.5));
     match role
     {
-        Role::Pawn => ((coords.1 as f64) - 1.0) * 0.1,
+        Role::Pawn => ((coords.1 as f32) - 1.0) * (1.0/7.0) * 0.5 * (tented.0 + 0.1),
         Role::Knight =>
         {
-            let mut ret = tented.0.min(tented.1) * 0.4 - 0.3;
+            let mut ret = tented.0.min(tented.1) - 0.45;
             if (coords.0 == 0 || coords.0 == 7) && (coords.1 == 0 || coords.1 == 7)
             {
                 ret -= 0.2;
             }
             return ret;
         }
-        Role::Bishop => tented.0.min(tented.1) * 0.3 - 0.3,
-        Role::Rook => tented.0 * 0.1 - 0.1,
+        Role::Bishop => tented.0.min(tented.1) * 0.5 - 0.25,
+        Role::Rook => tented.0 * 0.2 - 0.1,
         // try to prevent the queen from randomly developing into the middle of the board for no reason during the opening
-        Role::Queen => (3.5 - tented.0.min(tented.1)) * 0.2 - 0.2,
+        Role::Queen => (1.0 - tented.0.min(tented.1)) - 0.5,
         Role::King =>
         {
             let mut ret = 0.0;
@@ -55,7 +55,7 @@ fn get_piece_value_modifier(coords : (i32, i32), role : Role) -> f64
                 ret -= 0.8;
             }
             // better value in castling target positions to encourage castling
-            if (coords.0 == 2 && coords.1 == 0) || (coords.0 == 6 || coords.1 == 0)
+            if (coords.0 == 2 && coords.1 == 0) || (coords.0 == 6 && coords.1 == 0)
             {
                 ret += 2.0;
             }
@@ -63,18 +63,6 @@ fn get_piece_value_modifier(coords : (i32, i32), role : Role) -> f64
         }
     }
 }
-
-/*
-use std::hash::Hash;
-use std::hash::Hasher;
-use std::collections::hash_map::DefaultHasher;
-fn my_hash<T : Hash>(obj : T) -> u64
-{
-    let mut hasher = DefaultHasher::new();
-    obj.hash(&mut hasher);
-    hasher.finish()
-}
-*/
 
 /*
 fn count_all(pos : &Chess) -> i32
@@ -92,7 +80,7 @@ fn count_all(pos : &Chess) -> i32
 }
 */
 
-fn eval_inner(pos : &Chess) -> f64
+fn eval_inner(pos : &Chess) -> f32
 {
     if pos.is_checkmate() && pos.turn() == Color::Black
     {
@@ -109,23 +97,23 @@ fn eval_inner(pos : &Chess) -> f64
         return 0.0;
     }
     
-    let mut eval = 0.0f64;
+    let mut eval = 0.0f32;
+    let board = pos.board();
     
     for i in 0..64
     {
         let sq = Square::new(i);
         let mut first_knight_white = true;
         let mut first_knight_black = true;
-        if let Some(piece) = pos.board().piece_at(sq)
+        if let Some(piece) = board.piece_at(sq)
         {
-            let sq_normal = if piece.color == Color::White
+            let color_f = if piece.color == Color::White { 1.0 } else { -1.0 };
+            
+            let mut sq_normal = sq;
+            if piece.color == Color::Black
             {
-                sq
+                sq_normal = sq.flip_vertical()
             }
-            else
-            {
-                sq.flip_vertical()
-            };
             
             let mut value = get_piece_value_modifier(sq_to_coords(sq_normal), piece.role);
             value = match piece.color
@@ -134,138 +122,101 @@ fn eval_inner(pos : &Chess) -> f64
                 Color::White =>   value + piece_value(piece.role, &mut first_knight_white) ,
             };
             eval += value;
+            
+            // reduce evaluation for pieces that are being attacked
+            let bb = board.attacks_to(sq, !piece.color, board.occupied());
+            let attack_count = bb.count();
+            eval -= (attack_count as f32) * 0.1 * color_f;
         }
     }
     
-    //eval += my_hash(pos) as f64 * 0.000000000000000000000001;
+    // for benchmarking microoptimizations, give every evaluation a slightly different value
+    //eval += (pos.zobrist_hash::<u64>(EnPassantMode::Always) as f64 * 0.0000000000000000001) as f32;
     
     return eval;
 }
 
-fn eval(pos : &Chess) -> f64
+fn eval(pos : &Chess) -> f32
 {
     eval_inner(pos)
 }
 
-fn ab_pruning(pos : &Chess, alpha : &mut f64, beta : &mut f64, score : f64) -> bool
-{
-    if pos.turn() == Color::White
-    {
-        *alpha = alpha.max(score);
-        if score >= *beta
-        {
-            return true;
-        }
-    }
-    else
-    {
-        *beta = beta.min(score);
-        if score <= *alpha
-        {
-            return true;
-        }
-    }
-    false
-}
-
-fn update_best(pos : &Chess, score : f64, move_ : Move, best_score : &mut f64, best_move : &mut Option<Move>)
-{
-    if (pos.turn() == Color::White && score > *best_score)
-    || (pos.turn() == Color::Black && score < *best_score)
-    {
-        *best_score = score;
-        *best_move = Some(move_);
-    }
-}
-
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
+use shakmaty::zobrist::ZobristHash;
+use shakmaty::zobrist::Zobrist64;
+use shakmaty::EnPassantMode;
 
-static mut HASHMAP : Lazy<HashMap<(Board, Color), (Option<Move>, f64, u32)>> = Lazy::new(|| HashMap::new() );
-    
-static MAX_DEPTH : u32 = 6;
+static MIN_DEPTH : u16 = 6;
+static MAX_DEPTH : u16 = 10;
 
-fn find_best(pos : &Chess, mut alpha : f64, mut beta : f64, depth : u32) -> (Option<Move>, f64)
+fn move_quality_heuristic(a : &Move) -> i32
 {
-    let is_root = depth == MAX_DEPTH;
+    let mut a_val = 0;
+    
+    a_val += if a.role() == Role::Queen { 1 } else { 0 };
+    a_val += if a.is_promotion() { 3 } else { 0 };
+    a_val += if a.is_capture() && a.role() == Role::Pawn { 2 } else { 0 };
+    a_val += if a.is_capture() { 2 } else { 0 };
+    a_val += if a.is_castle() { 1 } else { 0 };
+    a_val
+}
+
+static mut TTABLE : Lazy<HashMap<Zobrist64, (f32, u16, i8)>> = Lazy::new(|| HashMap::new() );
+fn eval_with_depth(pos : &Chess, mut alpha : f32, mut beta : f32, depth : u16, color : f32) -> f32
+{
+    let alpha_orig = alpha;
+    assert!(color == 1.0 || color == -1.0);
     
     unsafe
     {
-        let maybe = HASHMAP.get(&(pos.board().clone(), pos.turn()));
-        if let Some((move_, score, maybe_depth)) = maybe
+        let maybe = TTABLE.get(&pos.zobrist_hash(EnPassantMode::Always));
+        if let Some((score, maybe_depth, flag)) = maybe
         {
-            // ignore cached mate values because they have depth embedded in them
-            if *maybe_depth >= depth && (*score > -10000.0 && *score < 10000.0)
+            // flag: 0 = exact, -1 : lower bound, +1 : upper bound
+            if *maybe_depth >= depth
+                // ignore cached mate values because they have depth embedded in them
+                && (*score > -100000.0 && *score < 100000.0)
             {
-                return (move_.clone(), *score);
+                match *flag
+                {
+                    0 => return *score, // exact
+                    -1 => alpha = alpha.max(*score),
+                    1 => beta = beta.min(*score),
+                    _ => panic!("invalid internal state"),
+                }
+                if alpha >= beta
+                {
+                    return *score;
+                }
             }
         }
     }
     
-    let mut best_score = if pos.turn() == Color::White { -10000000000000.0 } else { 10000000000000.0 };
-    let best_score_init = best_score;
-    let mut best_move = None;
     let mut legal_moves = pos.legal_moves();
     
-    if legal_moves.len() == 0
+    if legal_moves.len() == 0 || depth == 0
     {
-        let score = eval(&pos);
-        //println!("no legal moves, returning eval... {}", score);
-        return (None, score);
+        return eval(&pos) * color;
     }
     
-    if legal_moves.len() > 8
-    {
-        legal_moves.sort_by(|a, b|
-        {
-            let get_heuristic = |a : &Move|
-            {
-                let mut a_val = 0;
-                
-                // eval function is too slow for this
-                //let mut pos2 = pos.clone();
-                //pos2.play_unchecked(a);
-                //a_val += (eval(&pos2) * 50.0) as i32 * if pos.turn() == Color::Black { -1 } else { 1 };
-                
-                a_val += if a.role() == Role::Queen { 1 } else { 0 };
-                a_val += if a.is_promotion() { 3 } else { 0 };
-                a_val += if a.is_capture() && a.role() == Role::Pawn { 2 } else { 0 };
-                a_val += if a.is_capture() { 2 } else { 0 };
-                a_val += if a.is_castle() { 1 } else { 0 };
-                a_val
-            };
-            get_heuristic(b).cmp(&get_heuristic(a))
-        });
-    }
+    legal_moves.sort_by(|a, b| move_quality_heuristic(b).cmp(&move_quality_heuristic(a)) );
     
+    let mut best_score : f32 = -10000000000000.0;
     for move_ in legal_moves
     {
         let mut next_pos = pos.clone();
         next_pos.play_unchecked(&move_);
-        let mut score;
-        if depth > 0
+        let mut score = -eval_with_depth(&next_pos, -beta, -alpha, depth - 1, -color);
+        
+        if score > 100000.0
         {
-            let (next_move, _score) = find_best(&next_pos, alpha, beta, depth - 1);
-            if next_move.is_none() && !next_pos.is_checkmate() && best_score_init == best_score
-            {
-                //println!("------------ no next move");
-                continue;
-            }
-            score = _score;
-        }
-        else
-        {
-            score = eval(&next_pos);
+            score -= 1.0; // prioritize short mates
         }
         
-        if score < -100000.0 || score > 100000.0
-        {
-            score -= if (depth & 1 == 0) == (pos.turn() == Color::Black) { -1.0 } else { 1.0 };
-        }
-        
-        update_best(pos, score, move_, &mut best_score, &mut best_move);
-        
-        if ab_pruning(pos, &mut alpha, &mut beta, best_score)
+        best_score = best_score.max(score);
+        alpha = alpha.max(best_score);
+        if alpha >= beta
         {
             break;
         }
@@ -273,19 +224,59 @@ fn find_best(pos : &Chess, mut alpha : f64, mut beta : f64, depth : u32) -> (Opt
     
     unsafe
     {
-        if HASHMAP.len() > 1000000
+        let mut flag = 0;
+        if best_score <= alpha_orig
         {
-            HASHMAP.clear();
+            flag = 1;
         }
-        HASHMAP.insert((pos.board().clone(), pos.turn()), (best_move.clone(), best_score, depth));
+        else if best_score >= beta
+        {
+            flag = -1;
+        }
+        TTABLE.insert(pos.zobrist_hash(EnPassantMode::Always), (best_score, depth, flag));
     }
     
-    if is_root
+    best_score
+}
+
+fn find_best(pos : &Chess, depth : u16) -> Option<(Move, f32)>
+{
+    let ab_ext = 10000000.0;
+    let color = if pos.turn() == Color::White { 1.0 } else { -1.0 };
+    
+    let mut legal_moves = pos.legal_moves();
+    if legal_moves.len() == 0
     {
-        println!("\npicking {:?} with score {}", best_move, best_score);
+        return None;
     }
     
-    (best_move, best_score)
+    let mut best_score = -10000000000000.0;
+    let mut best_score_zd = best_score;
+    let mut best_move = None;
+    for move_ in legal_moves
+    {
+        let mut next_pos = pos.clone();
+        next_pos.play_unchecked(&move_);
+        let score = -eval_with_depth(&next_pos, -ab_ext, ab_ext, depth - 1, -color);
+        if score > best_score
+        {
+            best_score = score;
+            best_move = Some(move_);
+            best_score_zd = eval(&next_pos);
+        }
+    }
+    unsafe
+    {
+        if TTABLE.len() > 2000000
+        {
+            TTABLE.clear();
+            //println!("---- clearing table");
+        }
+    }
+    assert!(best_move.is_some());
+    let best_move = best_move.unwrap();
+    println!("\npicking {:?} with score {} (depth {}) (zero-depth score {})", best_move, best_score * color, depth, best_score_zd);
+    Some((best_move, best_score))
 }
 
 fn piece_letter(piece : Option<Piece>) -> char
@@ -303,6 +294,34 @@ fn piece_letter(piece : Option<Piece>) -> char
     }
 }
 
+fn print_colorizer(x : u32, y : u32, hx : u32, hy : u32)
+{
+    if ((x ^ y) & 1) == 1
+    {
+        // bright
+        if x == hx && y == hy
+        {
+            print!("\x1b[30;106m");
+        }
+        else
+        {
+            print!("\x1b[30;107m");
+        }
+    }
+    else
+    {
+        // dark
+        if x == hx && y == hy
+        {
+            print!("\x1b[30;46m");
+        }
+        else
+        {
+            print!("\x1b[30;100m");
+        }
+    }
+}
+
 fn print_board(pos : &Chess, highlight : Option<(u32, u32)>)
 {
     let hx = if let Some(h) = highlight { h.0 } else { 1000 };
@@ -313,30 +332,7 @@ fn print_board(pos : &Chess, highlight : Option<(u32, u32)>)
         let y = 7 - _y;
         for x in 0..=7
         {
-            if ((x ^ y) & 1) == 1
-            {
-                // bright
-                if x == hx && y == hy
-                {
-                    print!("\x1b[30;106m");
-                }
-                else
-                {
-                    print!("\x1b[30;107m");
-                }
-            }
-            else
-            {
-                // dark
-                if x == hx && y == hy
-                {
-                    print!("\x1b[30;46m");
-                }
-                else
-                {
-                    print!("\x1b[30;100m");
-                }
-            }
+            print_colorizer(x, y, hx, hy);
             
             let piece = pos.board().piece_at(Square::new(x + y * 8));
             print!(" {} ", piece_letter(piece));
@@ -344,10 +340,40 @@ fn print_board(pos : &Chess, highlight : Option<(u32, u32)>)
         println!("\x1b[0;0m");
     }
 }
+
+fn get_desired_depth(pos : &Chess) -> u16
+{
+    let mut depth = MIN_DEPTH;
+    let removed_pieces = 32 - pos.board().occupied().count();
+    // For each 8 pieces that have been removed from the board, add 1 to depth.
+    depth += (removed_pieces / 8) as u16;
+    depth = depth.min(MAX_DEPTH);
+    let white_pieces = pos.board().by_color(Color::White).count();
+    let black_pieces = pos.board().by_color(Color::Black).count();
+    // for each 4 pieces/pawns advantage one side has over the other, add 1 to depth.
+    depth += ((white_pieces as isize - black_pieces as isize).abs() / 4) as u16;
+    depth
+}
     
 fn main()
 {
-    let mut pos = if true
+    // first, print out value tables for the sake of sanity
+    for role in &[Role::Pawn, Role::Knight, Role::Bishop, Role::Rook, Role::Queen, Role::King]
+    {
+        println!("Value offset grid for {:?}...", role);
+        for _y in 0..=7
+        {
+            let y = 7 - _y;
+            for x in 0..=7
+            {
+                print_colorizer(x, y, 1000, 1000);
+                print!("{:5.2} ", get_piece_value_modifier((x as i32, y as i32), *role));
+            }
+            println!("\x1b[0;0m");
+        }
+    }
+    
+    let mut pos = if false
     {
         Chess::default()
     }
@@ -356,7 +382,18 @@ fn main()
         use shakmaty::fen::Fen;
         use shakmaty::CastlingMode;
         
-        let fen = "r1bqk2r/ppp2ppp/2np1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - 0 6"; // four knights opening
+        //let fen = "r1bqk2r/ppp2ppp/2np1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - 0 6"; // four knights opening
+        //let fen = "rnbqkb1r/pppppp1p/5np1/8/8/5NP1/PPPPPP1P/RNBQKB1R w KQkq - 0 3"; // symmetrical king's indian
+        
+        //let fen = "r1b2nk1/1pp1r3/p1p4p/4Np1N/8/3P4/PPP2P1P/R3R1K1 w - - 2 23"; // white advantage midgame
+        //let fen = "1R6/2p2pk1/3p4/8/3P2r1/1P6/3r4/1K5R w - - 0 34"; // white: don't connet the rooks!
+        //let fen = "5k2/2p2p2/3p4/3P4/8/1P6/1K4r1/R7 w - - 11 43"; // white: loop trigger
+        
+        //let fen = "8/2p3k1/8/1P2p3/p1P5/8/P2P2PR/2K5 w - - 1 34"; // mate in 11 for white
+        let fen = "8/1P6/8/6k1/4R3/p2P4/P5P1/2K5 w - - 1 42"; // mate in 5 for white
+        //let fen = "2k5/2P5/8/3b4/8/8/3K4/6q1 b - - 7 93"; // mate in 5 for black (9 ply)
+        //let fen = "R7/8/8/8/8/2k4p/2P1K2P/1QR1R3 w - - 1 35"; // mate in 2 for white
+        //let fen = "rnbqkb1r/p1ppp1pp/5n2/1p6/5P1P/PPN5/2PPp3/R1BQKB1R w KQkq - 0 8"; // trivially best to recapture
         //let fen = "8/2P2k2/PR6/4B3/3PB3/4K3/7p/2r5 w - - 2 61"; // mate in 7 for white
         //let fen = "2Q5/5k2/PR6/8/3PB3/8/r2K3B/8 w - - 1 64"; // mate in 4 for white
         //let fen = "2Q5/5k2/PR6/8/3P4/8/2BK3B/r7 w - - 3 65"; // mate in 2 for white
@@ -379,35 +416,43 @@ fn main()
     //println!("{:?}", legals);
     println!("{}", eval(&pos));
     
-    let ab_ext = 10000000.0;
-    
     print_board(&pos, None);
     
-    let mut move_ = find_best(&pos, -ab_ext, ab_ext, MAX_DEPTH);
+    let mut depth = MIN_DEPTH;
+    
+    let mut move_ = None;
     let mut n = 0;
     let mut movelog = "".to_string();
     let mut movelog_uci = "".to_string();
-    while move_.0.is_some()
+    while true
     {
-        use std::io::Write;
+        if pos.is_insufficient_material() || pos.halfmoves() >= 100
+        {
+            break;
+        }
         
-        let m = move_.0.as_ref().unwrap();
+        depth = get_desired_depth(&pos);
+        
+        move_ = find_best(&pos, depth);
+        if move_.is_none()
+        {
+            break;
+        }
+        
+        let m = &move_.as_ref().unwrap().0;
         let uci = m.to_uci(pos.castles().mode());
         print!("{} ", uci);
         
+        use std::io::Write;
         std::io::stdout().flush().unwrap();
         
         movelog += &format!("{} ", San::from_move(&pos, &m).to_string());
         movelog_uci += &format!("{} ", uci);
         
-        pos.play_unchecked(&(move_.0.as_ref().unwrap()));
-        if pos.is_game_over() || pos.halfmoves() > 50
-        {
-            break;
-        }
+        pos.play_unchecked(m);
         if n % 1 == 0
         {
-            print_board(&pos, Some((move_.0.as_ref().unwrap().to().file().into(), move_.0.as_ref().unwrap().to().rank().into())));
+            print_board(&pos, Some((m.to().file().into(), m.to().rank().into())));
         }
         n += 1;
         
@@ -419,7 +464,14 @@ fn main()
         
         std::io::stdout().flush().unwrap();
         
-        move_ = find_best(&pos, -ab_ext, ab_ext, MAX_DEPTH);
+        if false
+        {
+            depth -= 1;
+            if depth == 0
+            {
+                break;
+            }
+        }
     }
     
     println!("");
@@ -429,6 +481,7 @@ fn main()
     println!("All done!");
     println!("{}", movelog);
     println!("{}", movelog_uci);
+    println!("{}", Epd::from_position(pos.clone(), EnPassantMode::Legal));
     print_board(&pos, None);
     if pos.is_checkmate()
     {
