@@ -1,4 +1,4 @@
-use shakmaty::{Chess, Board, Position, Square, Color, Role, Move, Piece, Rank, san::San};
+use shakmaty::{Chess, Board, Position, Square, Color, Role, Move, Piece, san::San};
 
 fn piece_value(role : Role, first_knight : &mut bool) -> f64
 {
@@ -75,19 +75,21 @@ fn my_hash<T : Hash>(obj : T) -> u64
 }
 */
 
+/*
 fn count_all(pos : &Chess) -> i32
 {
     let mut ret = 0;
     for i in 0..64
     {
         let sq = Square::new(i);
-        if let Some(piece) = pos.board().piece_at(sq)
+        if let Some(_piece) = pos.board().piece_at(sq)
         {
             ret += 1;
         }
     }
     ret
 }
+*/
 
 fn eval_inner(pos : &Chess) -> f64
 {
@@ -180,11 +182,11 @@ use once_cell::sync::Lazy;
 
 static mut HASHMAP : Lazy<HashMap<Board, (Option<Move>, f64, u32)>> = Lazy::new(|| HashMap::new() );
     
-static max_depth : u32 = 6;
+static MAX_DEPTH : u32 = 6;
 
-fn find_best(pos : &Chess, mut alpha : f64, mut beta : f64, mut depth : u32) -> (Option<Move>, f64)
+fn find_best(pos : &Chess, mut alpha : f64, mut beta : f64, depth : u32) -> (Option<Move>, f64)
 {
-    let is_root = depth == max_depth;
+    let is_root = depth == MAX_DEPTH;
     
     unsafe
     {
@@ -211,7 +213,7 @@ fn find_best(pos : &Chess, mut alpha : f64, mut beta : f64, mut depth : u32) -> 
     
     if legal_moves.len() == 0
     {
-        let mut score = eval(&pos);
+        let score = eval(&pos);
         //println!("no legal moves, returning eval... {}", score);
         return (None, score);
     }
@@ -381,7 +383,7 @@ fn main()
     
     print_board(&pos, None);
     
-    let mut move_ = find_best(&pos, -ab_ext, ab_ext, max_depth);
+    let mut move_ = find_best(&pos, -ab_ext, ab_ext, MAX_DEPTH);
     let mut n = 0;
     let mut movelog = "".to_string();
     while move_.0.is_some()
@@ -413,7 +415,7 @@ fn main()
         
         std::io::stdout().flush().unwrap();
         
-        move_ = find_best(&pos, -ab_ext, ab_ext, max_depth);
+        move_ = find_best(&pos, -ab_ext, ab_ext, MAX_DEPTH);
     }
     
     println!("");
