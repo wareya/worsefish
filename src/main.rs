@@ -36,16 +36,17 @@ fn get_piece_value_modifier(coords : (i32, i32), role : Role) -> f64
         Role::Pawn => ((coords.1 as f64) - 1.0) * 0.1,
         Role::Knight =>
         {
-            let mut ret = tented.0.min(tented.1) * 0.4 - 0.1;
+            let mut ret = tented.0.min(tented.1) * 0.4 - 0.3;
             if (coords.0 == 0 || coords.0 == 7) && (coords.1 == 0 || coords.1 == 7)
             {
                 ret -= 0.2;
             }
             return ret;
         }
-        Role::Bishop => tented.0.min(tented.1) * 0.3,
-        Role::Rook => tented.0 * 0.1,
-        Role::Queen => (3.5 - tented.0.max(tented.1)) * 0.1,
+        Role::Bishop => tented.0.min(tented.1) * 0.3 - 0.3,
+        Role::Rook => tented.0 * 0.1 - 0.1,
+        // try to prevent the queen from randomly developing into the middle of the board for no reason during the opening
+        Role::Queen => (3.5 - tented.0.min(tented.1)) * 0.2 - 0.2,
         Role::King =>
         {
             let mut ret = 0.0;
